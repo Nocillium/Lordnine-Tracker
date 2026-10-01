@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lordnine Boss Tracker</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow">Lordnine Boss Tracker</p>
+        <h1>Respawn control built for fast raid callouts.</h1>
+        <p class="hero-text">
+          Track interval respawns from live defeats, backfill missed kills, and keep weekly bosses in view with a lightweight local dashboard.
+        </p>
+      </div>
+      <div class="hero-status-card">
+        <p class="card-label" id="currentTimeLabel">Local Raid Clock</p>
+        <p class="hero-time" id="currentTime">--:--:--</p>
+        <p class="card-note" id="currentTimeNote">Spawn slots are converted to your local timezone from the original UTC+8 schedule. Weekly bosses stay highlighted for 2 hours after their scheduled spawn.</p>
+      </div>
+    </header>
+
+    <section class="summary-grid" id="summaryGrid">
+      <article class="summary-card">
+        <p class="card-label">Active Now</p>
+        <p class="summary-value" id="activeCount">0</p>
+        <p class="card-note">Bosses ready to contest right now.</p>
+      </article>
+      <article class="summary-card">
+        <p class="card-label">Tracked Interval Timers</p>
+        <p class="summary-value" id="trackedCount">0</p>
+        <p class="card-note">Interval bosses with a stored defeat time.</p>
+      </article>
+      <article class="summary-card">
+        <p class="card-label">Weekly Schedule Bosses</p>
+        <p class="summary-value" id="scheduledCount">0</p>
+        <p class="card-note">Recurring bosses calculated from static weekly times.</p>
+      </article>
+    </section>
+
+    <section class="dashboard-grid">
+      <article class="dashboard-card">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Live Board</p>
+            <h2>Currently Alive / Active</h2>
+          </div>
+        </div>
+        <div id="activeBosses" class="widget-list"></div>
+      </article>
+
+      <article class="dashboard-card">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Priority Queue</p>
+            <h2>Closest Upcoming Spawns</h2>
+          </div>
+        </div>
+        <div id="upcomingBosses" class="widget-list"></div>
+      </article>
+    </section>
+
+    <section class="toolbar-card">
+      <div class="toolbar-row">
+        <label class="search-field" for="searchInput">
+          <span>Search</span>
+          <input id="searchInput" type="search" placeholder="Boss name or region">
+        </label>
+
+        <label class="sort-field" for="sortSelect">
+          <span>Sort by</span>
+          <select id="sortSelect">
+            <option value="next-spawn">Next Spawn Time</option>
+            <option value="level">Level</option>
+            <option value="alphabetical">Alphabetical</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="filter-group" id="filterGroup" role="tablist" aria-label="Boss filters">
+        <button type="button" class="filter-pill is-active" data-filter="all">All Bosses</button>
+        <button type="button" class="filter-pill" data-filter="active">Active Now</button>
+        <button type="button" class="filter-pill" data-filter="upcoming">Upcoming</button>
+        <button type="button" class="filter-pill" data-filter="interval">Interval Bosses</button>
+        <button type="button" class="filter-pill" data-filter="scheduled">Scheduled Bosses</button>
+      </div>
+
+      <div class="admin-access-row">
+        <div>
+          <p class="card-label">Editing Access</p>
+          <p class="admin-status" id="adminStatus">Editing locked. Enter the admin PIN to update timers.</p>
+        </div>
+        <div class="admin-actions">
+          <button type="button" class="primary-button" id="adminToggleButton">Enter Admin PIN</button>
+          <button type="button" class="secondary-button" id="adminLogoutButton" hidden>Lock Editing</button>
+        </div>
+      </div>
+
+      <p class="storage-notice" id="storageNotice" hidden></p>
+    </section>
+
+    <section class="table-card">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Boss Database</p>
+          <h2>All Lordnine Bosses</h2>
+        </div>
+      </div>
+
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Boss</th>
+              <th>Type</th>
+              <th>Region</th>
+              <th>Respawn / Schedule</th>
+              <th>Next Spawn</th>
+              <th>Countdown</th>
+              <th>Last Defeated</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="bossTableBody"></tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <div class="modal-backdrop" id="timeModal" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <div class="modal-header">
+        <div>
+          <p class="eyebrow">Backfill Timer</p>
+          <h2 id="modalTitle">Set Defeated Time</h2>
+        </div>
+        <button type="button" class="icon-button" id="closeModalButton" aria-label="Close">×</button>
+      </div>
+
+      <form id="timeForm">
+        <input type="hidden" id="modalBossId">
+        <label class="modal-field" for="defeatedAtInput">
+          <span>Defeated at</span>
+          <input id="defeatedAtInput" type="datetime-local" required>
+        </label>
+        <p class="card-note" id="modalHint">
+          Enter the kill time to recalculate the next spawn. For scheduled bosses this stores a last-seen note without changing the weekly schedule.
+        </p>
+        <div class="modal-actions">
+          <button type="button" class="secondary-button" id="cancelModalButton">Cancel</button>
+          <button type="submit" class="primary-button">Save Time</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="adminModal" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="adminModalTitle">
+      <div class="modal-header">
+        <div>
+          <p class="eyebrow">Admin Access</p>
+          <h2 id="adminModalTitle">Unlock Editing</h2>
+        </div>
+        <button type="button" class="icon-button" id="closeAdminModalButton" aria-label="Close">×</button>
+      </div>
+
+      <form id="adminForm">
+        <label class="modal-field" for="adminPinInput">
+          <span>Admin PIN</span>
+          <input id="adminPinInput" type="password" inputmode="numeric" autocomplete="current-password" required>
+        </label>
+        <p class="card-note">Enter the admin PIN before using Defeated, Set Defeated Time, or Reset Timer.</p>
+        <p class="admin-error" id="adminPinError" hidden>Incorrect PIN. Please try again.</p>
+        <div class="modal-actions">
+          <button type="button" class="secondary-button" id="cancelAdminModalButton">Cancel</button>
+          <button type="submit" class="primary-button">Unlock Editing</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
