@@ -682,6 +682,7 @@ tbody tr:hover {
   padding: 24px;
   background: rgba(4, 5, 9, 0.72);
   backdrop-filter: blur(8px);
+  z-index: 1000;
 }
 
 .modal-backdrop[hidden] {
@@ -692,6 +693,7 @@ tbody tr:hover {
   width: min(520px, 100%);
   padding: 24px;
   box-shadow: 0 28px 80px rgba(0, 0, 0, 0.42);
+  z-index: 1001;
 }
 
 .modal-header {
