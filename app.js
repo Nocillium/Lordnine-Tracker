@@ -1,6 +1,8 @@
 const STORAGE_KEY = "lordnine-boss-tracker-state";
 const ADMIN_SESSION_KEY = "lordnine-boss-tracker-admin-session";
 const ADMIN_PIN = "2601";
+const SUPABASE_URL = "https://jlgzplkatutibmrnznwx.supabase.co";
+const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_1Kw3Us1AP5DYnmF4zpCL4g_hSpcIi2Z";
 const PRESET_STATE_VERSION = "2026-10-01-spawn-board";
 const SCHEDULED_ACTIVE_WINDOW_MS = 2 * 60 * 60 * 1000;
 const WARNING_WINDOW_MS = 60 * 60 * 1000;
@@ -156,6 +158,7 @@ const elements = {
   sortSelect: document.getElementById("sortSelect"),
   filterGroup: document.getElementById("filterGroup"),
   adminStatus: document.getElementById("adminStatus"),
+  syncStatus: document.getElementById("syncStatus"),
   adminToggleButton: document.getElementById("adminToggleButton"),
   adminLogoutButton: document.getElementById("adminLogoutButton"),
   storageNotice: document.getElementById("storageNotice"),
@@ -187,11 +190,20 @@ let appState = loadState();
 let adminSession = loadAdminSession();
 const displayTimeZone = createInitialDisplayTimeZone();
 let isDetectingIpTimeZone = false;
+let remoteSyncState = {
+  enabled: false,
+  writable: false,
+  loading: false,
+  message: "Supabase sync is unavailable.",
+};
+let supabaseClient = null;
 persistState();
 
+initializeSupabaseClient();
 attachEvents();
 render();
 detectIpTimeZone();
+initializeRemoteSync();
 window.setInterval(render, 1000);
 window.setInterval(detectIpTimeZone, 60000);
 
@@ -341,6 +353,7 @@ function render() {
   elements.currentTime.textContent = formatClockTime(now);
   elements.currentTimeNote.textContent = getCurrentTimeNote();
   renderAdminAccess();
+  elements.syncStatus.textContent = remoteSyncState.message;
   elements.activeCount.textContent = bossStates.filter((boss) => boss.isActive).length;
   elements.trackedCount.textContent = bosses
     .filter((boss) => boss.type === "interval")
@@ -668,12 +681,14 @@ function setDefeatTime(bossId, defeatedAt) {
   appState.defeatTimes[bossId] = defeatedAt.toISOString();
   persistState();
   render();
+  persistRemoteTimer(bossId, appState.defeatTimes[bossId]);
 }
 
 function resetTimer(bossId) {
   delete appState.defeatTimes[bossId];
   persistState();
   render();
+  persistRemoteTimer(bossId, null);
 }
 
 function runBossAction(action, bossId) {
@@ -888,6 +903,115 @@ function showStorageNotice(message) {
 function hideStorageNotice() {
   elements.storageNotice.hidden = true;
   elements.storageNotice.textContent = "";
+}
+
+function initializeSupabaseClient() {
+  if (!window.supabase || !SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {
+    remoteSyncState = {
+      enabled: false,
+      writable: false,
+      loading: false,
+      message: "Supabase sync is disabled. Add your project URL and publishable key to enable shared timers.",
+    };
+    return;
+  }
+
+  supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
+  remoteSyncState = {
+    enabled: true,
+    writable: false,
+    loading: true,
+    message: "Supabase sync is loading shared timers...",
+  };
+}
+
+async function initializeRemoteSync() {
+  if (!supabaseClient) {
+    render();
+    return;
+  }
+
+  remoteSyncState.loading = true;
+  remoteSyncState.message = "Supabase sync is loading shared timers...";
+  render();
+
+  await loadRemoteTimers();
+}
+
+async function loadRemoteTimers() {
+  const { data, error } = await supabaseClient
+    .from("boss_timers")
+    .select("boss_id, defeated_at")
+    .order("boss_id", { ascending: true });
+
+  if (error) {
+    remoteSyncState.loading = false;
+    remoteSyncState.message = "Supabase sync could not load shared timers. Using local browser data instead.";
+    showStorageNotice(`Supabase read failed: ${error.message}`);
+    render();
+    return;
+  }
+
+  applyRemoteTimers(data || []);
+  remoteSyncState.loading = false;
+  remoteSyncState.message = "Supabase sync is active for shared reads. Local preset timers stay visible until shared Supabase timer values are written.";
+  persistState();
+  hideStorageNotice();
+  render();
+}
+
+function applyRemoteTimers(rows) {
+  const hasTrackedRemoteTimers = rows.some((row) => Boolean(row.defeated_at));
+  const presetDefeatTimes = createPresetDefeatTimes(new Date());
+
+  if (!hasTrackedRemoteTimers) {
+    Object.entries(presetDefeatTimes).forEach(([bossId, defeatedAt]) => {
+      if (!appState.defeatTimes[bossId]) {
+        appState.defeatTimes[bossId] = defeatedAt;
+      }
+    });
+  }
+
+  rows.forEach((row) => {
+    if (row.defeated_at) {
+      appState.defeatTimes[row.boss_id] = row.defeated_at;
+      return;
+    }
+
+    if (hasTrackedRemoteTimers) {
+      delete appState.defeatTimes[row.boss_id];
+    }
+  });
+}
+
+async function persistRemoteTimer(bossId, defeatedAt) {
+  if (!supabaseClient) {
+    return;
+  }
+
+  const payload = {
+    boss_id: bossId,
+    defeated_at: defeatedAt,
+    updated_at: new Date().toISOString(),
+    updated_by: adminSession.isUnlocked ? "website-admin" : "website",
+  };
+
+  const { error } = await supabaseClient
+    .from("boss_timers")
+    .upsert(payload, { onConflict: "boss_id" });
+
+  if (error) {
+    remoteSyncState.writable = false;
+    remoteSyncState.message = "Supabase reads are active, but remote writes are blocked until insert/update RLS policies are added.";
+    showStorageNotice(`Supabase write failed: ${error.message}`);
+    render();
+    return;
+  }
+
+  remoteSyncState.writable = true;
+  remoteSyncState.message = "Supabase sync is active for shared reads and writes.";
+  hideStorageNotice();
+  render();
 }
 
 function formatScheduleText(schedule, now) {

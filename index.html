@@ -92,6 +92,7 @@
         <div>
           <p class="card-label">Editing Access</p>
           <p class="admin-status" id="adminStatus">Editing locked. Enter the admin PIN to update timers.</p>
+          <p class="card-note" id="syncStatus">Supabase sync is connecting.</p>
         </div>
         <div class="admin-actions">
           <button type="button" class="primary-button" id="adminToggleButton">Enter Admin PIN</button>
@@ -182,6 +183,7 @@
     </div>
   </div>
 
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="app.js"></script>
 </body>
 </html>
