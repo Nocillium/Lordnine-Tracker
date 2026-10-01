@@ -15,6 +15,9 @@ const TIMEZONE_SHORT_LABELS = {
   "Asia/Manila": "PHT",
   "Asia/Seoul": "KST",
 };
+const FEATURED_BOSS_IMAGE_PATHS = {
+  "baron-braudmore": "Bosses/baron.png",
+};
 const PRESET_ALIASES = {
   amentis: "amentis",
   araneo: "araneo",
@@ -148,6 +151,18 @@ const elements = {
   activeCount: document.getElementById("activeCount"),
   trackedCount: document.getElementById("trackedCount"),
   scheduledCount: document.getElementById("scheduledCount"),
+  featuredEyebrow: document.getElementById("featuredEyebrow"),
+  featuredBossArt: document.getElementById("featuredBossArt"),
+  featuredBossImage: document.getElementById("featuredBossImage"),
+  featuredBossPlaceholder: document.getElementById("featuredBossPlaceholder"),
+  featuredBossKicker: document.getElementById("featuredBossKicker"),
+  featuredBossName: document.getElementById("featuredBossName"),
+  featuredBossSummary: document.getElementById("featuredBossSummary"),
+  featuredBossLevel: document.getElementById("featuredBossLevel"),
+  featuredBossLocation: document.getElementById("featuredBossLocation"),
+  featuredBossCountdown: document.getElementById("featuredBossCountdown"),
+  featuredDefeatButton: document.getElementById("featuredDefeatButton"),
+  featuredSetTimeButton: document.getElementById("featuredSetTimeButton"),
   currentTimeLabel: document.getElementById("currentTimeLabel"),
   currentTime: document.getElementById("currentTime"),
   currentTimeNote: document.getElementById("currentTimeNote"),
@@ -184,12 +199,16 @@ const uiState = {
   sort: "next-spawn",
   modalBossId: null,
   pendingAdminAction: null,
+  featuredBossId: null,
 };
 
 let appState = loadState();
 let adminSession = loadAdminSession();
 const displayTimeZone = createInitialDisplayTimeZone();
 let isDetectingIpTimeZone = false;
+let featuredArtRequestId = 0;
+const featuredArtCache = new Map();
+const featuredArtFailures = new Set();
 let remoteSyncState = {
   enabled: false,
   writable: false,
@@ -316,6 +335,30 @@ function attachEvents() {
   });
 
   elements.adminLogoutButton.addEventListener("click", lockAdminSession);
+  elements.featuredDefeatButton.addEventListener("click", () => {
+    if (!uiState.featuredBossId) {
+      return;
+    }
+
+    const pendingAction = { action: "defeat-now", bossId: uiState.featuredBossId };
+    if (!ensureAdminAccess(pendingAction)) {
+      return;
+    }
+
+    runBossAction(pendingAction.action, pendingAction.bossId);
+  });
+  elements.featuredSetTimeButton.addEventListener("click", () => {
+    if (!uiState.featuredBossId) {
+      return;
+    }
+
+    const pendingAction = { action: "open-time-modal", bossId: uiState.featuredBossId };
+    if (!ensureAdminAccess(pendingAction)) {
+      return;
+    }
+
+    runBossAction(pendingAction.action, pendingAction.bossId);
+  });
   elements.adminForm.addEventListener("submit", handleAdminUnlock);
   elements.closeAdminModalButton.addEventListener("click", () => closeAdminModal());
   elements.cancelAdminModalButton.addEventListener("click", () => closeAdminModal());
@@ -348,7 +391,9 @@ function render() {
   const now = new Date();
   const bossStates = bosses.map((boss) => buildBossState(boss, now));
   const visibleBosses = filterAndSortBosses(bossStates, now);
+  const featuredBoss = getFeaturedBoss(bossStates);
 
+  renderFeaturedBoss(featuredBoss);
   elements.currentTimeLabel.textContent = `${displayTimeZone.shortLabel} Raid Clock`;
   elements.currentTime.textContent = formatClockTime(now);
   elements.currentTimeNote.textContent = getCurrentTimeNote();
@@ -379,6 +424,182 @@ function render() {
   );
 
   elements.bossTableBody.innerHTML = visibleBosses.map((boss) => bossRowMarkup(boss, now)).join("");
+}
+
+function renderFeaturedBoss(boss) {
+  if (!boss) {
+    uiState.featuredBossId = null;
+    elements.featuredEyebrow.textContent = "Featured Boss";
+    elements.featuredBossKicker.textContent = "No Featured Boss";
+    elements.featuredBossName.textContent = "No active or upcoming boss";
+    elements.featuredBossSummary.textContent = "Add or sync boss timers to spotlight the current active boss here.";
+    elements.featuredBossLevel.textContent = "--";
+    elements.featuredBossLocation.textContent = "--";
+    elements.featuredBossCountdown.textContent = "--:--:--";
+    elements.featuredDefeatButton.disabled = true;
+    elements.featuredSetTimeButton.disabled = true;
+    elements.featuredBossImage.hidden = true;
+    elements.featuredBossImage.removeAttribute("src");
+    elements.featuredBossImage.alt = "";
+    elements.featuredBossPlaceholder.hidden = false;
+    elements.featuredBossArt.classList.remove("has-image");
+    return;
+  }
+
+  const isActive = boss.isActive;
+  uiState.featuredBossId = boss.id;
+  elements.featuredEyebrow.textContent = isActive ? "Current Boss" : "Closest Upcoming Boss";
+  elements.featuredBossKicker.textContent = isActive ? "Live Right Now" : "Next Spawn Window";
+  elements.featuredBossName.textContent = boss.name;
+  elements.featuredBossSummary.textContent = isActive
+    ? `${boss.name} is currently live in ${boss.location}. Track clears here, then update the timer the moment it goes down.`
+    : `${boss.name} is the next priority spawn. Keep your team ready for ${boss.nextSpawnLabel}.`;
+  elements.featuredBossLevel.textContent = formatBossLevel(boss.level);
+  elements.featuredBossLocation.textContent = boss.location;
+  elements.featuredBossCountdown.textContent = boss.countdownLabel;
+  elements.featuredDefeatButton.disabled = false;
+  elements.featuredSetTimeButton.disabled = false;
+  applyFeaturedBossImage(boss);
+}
+
+function applyFeaturedBossImage(boss) {
+  const requestId = ++featuredArtRequestId;
+  const imagePath = getBossImagePath(boss.id);
+  const cacheKey = `${boss.id}:${imagePath}`;
+
+  if (featuredArtCache.has(cacheKey)) {
+    showFeaturedBossImage(featuredArtCache.get(cacheKey), boss.name, cacheKey);
+    return;
+  }
+
+  if (featuredArtFailures.has(cacheKey)) {
+    showFeaturedBossPlaceholder(boss.name);
+    elements.featuredBossImage.dataset.cacheKey = cacheKey;
+    return;
+  }
+
+  if (elements.featuredBossImage.dataset.cacheKey === cacheKey && !elements.featuredBossImage.hidden) {
+    return;
+  }
+
+  elements.featuredBossImage.alt = `${boss.name} artwork`;
+  showFeaturedBossPlaceholder(boss.name);
+  loadFeaturedBossImage(imagePath, boss, requestId);
+}
+
+function getBossImagePath(bossId) {
+  return FEATURED_BOSS_IMAGE_PATHS[bossId] || `Bosses/${bossId}.png`;
+}
+
+function loadFeaturedBossImage(imagePath, boss, requestId) {
+  const image = new Image();
+  image.decoding = "async";
+  image.onload = async () => {
+    if (requestId !== featuredArtRequestId) {
+      return;
+    }
+
+    const processedSource = await createBossArtworkSource(image, imagePath);
+    if (requestId !== featuredArtRequestId) {
+      return;
+    }
+
+    const cacheKey = `${boss.id}:${imagePath}`;
+    featuredArtFailures.delete(cacheKey);
+    featuredArtCache.set(cacheKey, processedSource);
+    showFeaturedBossImage(processedSource, boss.name, cacheKey);
+  };
+  image.onerror = () => {
+    if (requestId !== featuredArtRequestId) {
+      return;
+    }
+
+    const cacheKey = `${boss.id}:${imagePath}`;
+    featuredArtFailures.add(cacheKey);
+    showFeaturedBossPlaceholder(boss.name);
+    elements.featuredBossImage.dataset.cacheKey = cacheKey;
+  };
+  image.src = imagePath;
+}
+
+function showFeaturedBossImage(source, bossName, cacheKey) {
+  if (elements.featuredBossImage.src !== source) {
+    elements.featuredBossImage.src = source;
+  }
+  elements.featuredBossImage.alt = `${bossName} artwork`;
+  elements.featuredBossImage.hidden = false;
+  elements.featuredBossImage.dataset.cacheKey = cacheKey;
+  elements.featuredBossPlaceholder.hidden = true;
+  elements.featuredBossPlaceholder.textContent = "";
+  elements.featuredBossArt.classList.add("has-image");
+}
+
+function showFeaturedBossPlaceholder(bossName) {
+  elements.featuredBossImage.hidden = true;
+  elements.featuredBossArt.classList.remove("has-image");
+  elements.featuredBossPlaceholder.hidden = false;
+  elements.featuredBossPlaceholder.textContent = `${bossName} art`;
+}
+
+async function createBossArtworkSource(image, fallbackSource) {
+  try {
+    return removeDarkBackground(image);
+  } catch (error) {
+    console.warn("Boss artwork processing failed. Using original image.", error);
+    return fallbackSource;
+  }
+}
+
+function removeDarkBackground(image) {
+  const canvas = document.createElement("canvas");
+  canvas.width = image.naturalWidth;
+  canvas.height = image.naturalHeight;
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+
+  if (!context) {
+    return image.currentSrc || image.src;
+  }
+
+  context.drawImage(image, 0, 0);
+  const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+  const data = imageData.data;
+
+  for (let index = 0; index < data.length; index += 4) {
+    const red = data[index];
+    const green = data[index + 1];
+    const blue = data[index + 2];
+    const alpha = data[index + 3];
+    const brightness = Math.max(red, green, blue);
+
+    if (brightness <= 10) {
+      data[index + 3] = 0;
+      continue;
+    }
+
+    if (brightness < 64) {
+      const fade = (brightness - 10) / 54;
+      data[index + 3] = Math.round(alpha * Math.max(0, Math.min(1, fade)));
+    }
+  }
+
+  context.putImageData(imageData, 0, 0);
+  return canvas.toDataURL("image/png");
+}
+
+function getFeaturedBoss(bossStates) {
+  const activeBosses = bossStates
+    .filter((boss) => boss.isActive)
+    .sort((left, right) => left.urgencyTime - right.urgencyTime || left.name.localeCompare(right.name));
+
+  if (activeBosses.length > 0) {
+    return activeBosses[0];
+  }
+
+  const upcomingBosses = bossStates
+    .filter((boss) => !boss.isActive && boss.nextSpawn)
+    .sort((left, right) => left.nextSpawn - right.nextSpawn || left.name.localeCompare(right.name));
+
+  return upcomingBosses[0] || null;
 }
 
 function renderWidgetList(container, items, emptyMessage) {

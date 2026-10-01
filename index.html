@@ -10,11 +10,38 @@
   <div class="app-shell">
     <header class="hero">
       <div class="hero-copy">
-        <p class="eyebrow">Lordnine Boss Tracker</p>
-        <h1>Respawn control built for fast raid callouts.</h1>
-        <p class="hero-text">
-          Track interval respawns from live defeats, backfill missed kills, and keep weekly bosses in view with a lightweight local dashboard.
-        </p>
+        <p class="eyebrow" id="featuredEyebrow">Featured Boss</p>
+        <div class="hero-feature-shell">
+          <div class="hero-feature-art" id="featuredBossArt">
+            <img id="featuredBossImage" alt="" hidden>
+            <div class="hero-feature-placeholder" id="featuredBossPlaceholder">No boss art yet</div>
+          </div>
+          <div class="hero-feature-copy">
+            <p class="hero-kicker" id="featuredBossKicker">Closest Upcoming Spawn</p>
+            <h1 id="featuredBossName">Loading boss data...</h1>
+            <p class="hero-text" id="featuredBossSummary">
+              The tracker will feature the current active boss here, or the closest upcoming boss when nothing is live.
+            </p>
+            <div class="hero-feature-meta">
+              <div class="hero-feature-chip">
+                <span class="hero-feature-chip-label">Boss</span>
+                <strong id="featuredBossLevel">--</strong>
+              </div>
+              <div class="hero-feature-chip">
+                <span class="hero-feature-chip-label">Region</span>
+                <strong id="featuredBossLocation">--</strong>
+              </div>
+              <div class="hero-feature-chip">
+                <span class="hero-feature-chip-label">Countdown</span>
+                <strong id="featuredBossCountdown">--:--:--</strong>
+              </div>
+              <div class="hero-feature-actions">
+                <button type="button" class="action-button emphasis" id="featuredDefeatButton">Defeated</button>
+                <button type="button" class="action-button" id="featuredSetTimeButton">Set Defeated Time</button>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
       <div class="hero-status-card">
         <p class="card-label" id="currentTimeLabel">Local Raid Clock</p>
