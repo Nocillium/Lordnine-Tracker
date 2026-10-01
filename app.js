@@ -142,6 +142,9 @@ const bosses = [
     "Tue 22:00",
     "Sun 19:00",
   ]),
+  scheduledBoss("guild-boss", "Guild Boss", null, "Guild Event", [
+    "Mon 21:30",
+  ]),
   scheduledBoss("tumier", "Tumier", 140, "Garbana Underground Waterway 3F", [
     "Sun 19:00",
   ]),
