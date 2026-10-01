@@ -185,11 +185,15 @@ const uiState = {
 
 let appState = loadState();
 let adminSession = loadAdminSession();
+const displayTimeZone = createInitialDisplayTimeZone();
+let isDetectingIpTimeZone = false;
 persistState();
 
 attachEvents();
 render();
+detectIpTimeZone();
 window.setInterval(render, 1000);
+window.setInterval(detectIpTimeZone, 60000);
 
 function intervalBoss(id, name, level, intervalHours, location) {
   return {
@@ -332,11 +336,10 @@ function render() {
   const now = new Date();
   const bossStates = bosses.map((boss) => buildBossState(boss, now));
   const visibleBosses = filterAndSortBosses(bossStates, now);
-  const viewerTimeZone = getViewerTimeZoneInfo(now);
 
-  elements.currentTimeLabel.textContent = `${viewerTimeZone.shortLabel} Raid Clock`;
+  elements.currentTimeLabel.textContent = `${displayTimeZone.shortLabel} Raid Clock`;
   elements.currentTime.textContent = formatClockTime(now);
-  elements.currentTimeNote.textContent = `Spawn slots are converted to your local timezone (${viewerTimeZone.shortLabel}) from the original UTC+8 schedule. Weekly bosses stay highlighted for 2 hours after their scheduled spawn.`;
+  elements.currentTimeNote.textContent = getCurrentTimeNote();
   renderAdminAccess();
   elements.activeCount.textContent = bossStates.filter((boss) => boss.isActive).length;
   elements.trackedCount.textContent = bosses
@@ -644,11 +647,21 @@ function formatDuration(milliseconds) {
 }
 
 function formatDateTime(date) {
-  return `${WEEKDAYS[date.getDay()]} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+  const parts = formatInDisplayTimeZone(date, {
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  return `${parts.weekday} ${parts.hour}:${parts.minute}`;
 }
 
 function formatClockTime(date) {
-  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}:${String(date.getSeconds()).padStart(2, "0")}`;
+  const parts = formatInDisplayTimeZone(date, {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+  return `${parts.hour}:${parts.minute}:${parts.second}`;
 }
 
 function setDefeatTime(bossId, defeatedAt) {
@@ -883,23 +896,80 @@ function formatScheduleText(schedule, now) {
     .join(", ");
 }
 
-function getViewerTimeZoneInfo(date) {
-  const resolvedTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "Local";
-  const shortName = TIMEZONE_SHORT_LABELS[resolvedTimeZone] || getTimeZoneShortName(date);
+function createInitialDisplayTimeZone() {
+  const browserTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   return {
-    timeZone: resolvedTimeZone,
-    shortLabel: shortName,
+    timeZone: browserTimeZone,
+    shortLabel: TIMEZONE_SHORT_LABELS[browserTimeZone] || getTimeZoneShortName(new Date(), browserTimeZone),
+    source: "browser",
   };
 }
 
-function getTimeZoneShortName(date) {
+function getCurrentTimeNote() {
+  const sourceText =
+    displayTimeZone.source === "ip"
+      ? `your connection-detected timezone (${displayTimeZone.shortLabel})`
+      : `your browser timezone (${displayTimeZone.shortLabel})`;
+
+  return `Spawn slots are converted using ${sourceText} from the original UTC+8 schedule. Weekly bosses stay highlighted for 2 hours after their scheduled spawn.`;
+}
+
+async function detectIpTimeZone() {
+  if (isDetectingIpTimeZone) {
+    return;
+  }
+
+  isDetectingIpTimeZone = true;
+
+  try {
+    const response = await fetch("https://ipwho.is/?fields=success,country_code,timezone");
+    if (!response.ok) {
+      return;
+    }
+
+    const data = await response.json();
+    if (!data.success || !data.timezone || !data.timezone.id) {
+      return;
+    }
+
+    displayTimeZone.timeZone = data.timezone.id;
+    displayTimeZone.shortLabel =
+      TIMEZONE_SHORT_LABELS[data.timezone.id] || data.timezone.abbr || getTimeZoneShortName(new Date(), data.timezone.id);
+    displayTimeZone.source = "ip";
+    render();
+  } catch (error) {
+    console.warn("IP timezone detection failed. Falling back to browser timezone.", error);
+  } finally {
+    isDetectingIpTimeZone = false;
+  }
+}
+
+function getTimeZoneShortName(date, timeZone) {
   const part = new Intl.DateTimeFormat(undefined, {
+    timeZone,
     timeZoneName: "short",
   })
     .formatToParts(date)
     .find((item) => item.type === "timeZoneName");
 
   return part ? part.value : "Local";
+}
+
+function formatInDisplayTimeZone(date, options) {
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: displayTimeZone.timeZone,
+    hour12: false,
+    ...options,
+  });
+  const parts = formatter.formatToParts(date);
+
+  return parts.reduce((result, part) => {
+    if (part.type !== "literal") {
+      result[part.type] = part.value;
+    }
+
+    return result;
+  }, {});
 }
 
 function createPresetDefeatTimes(now) {
